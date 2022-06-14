@@ -1,0 +1,8 @@
+user_storage:
+  address: 0xf0000
+  region: flash_primary
+  size: 0x4000
+settings_storage:
+  address: 0xf4000
+  region: flash_primary
+  size: 0xC000
