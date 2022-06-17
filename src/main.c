@@ -86,6 +86,10 @@ UART_ASYNC_ADAPTER_INST_DEFINE(async_adapter);
 static const struct device *const async_adapter;
 #endif
 
+#define ERR_PWD_NOT_FOUND "{\"err\":\"pwd not found\"}"
+#define ERR_OPERATION_REJECTED "{\"err\":\"operation rejected\"}"
+#define ERR_WRONG_FORMAT "{\"err\":\"wrong msg format\"}"
+
 // WIP:
 struct k_sem sem;
 struct k_mutex state_mutex;
@@ -605,6 +609,7 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 				}
 			}else{
 				// ERROR
+				printk("Wrong msg format\n");
 			}
 
 		} else if(tx->data[0] == '{'){
@@ -811,7 +816,6 @@ void ble_write_thread(void)
 
 		// WIP:
 		char pwd_msg[12+strlen(pwdStruct.pwd)];
-		char err[] = "{\"err\": \"pwd not found\"}\r\n";
 
 		k_mutex_lock(&state_mutex, K_FOREVER);
 		switch(state){
@@ -869,7 +873,7 @@ void ble_write_thread(void)
 						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
 					}
 				}else{
-					if (bt_nus_send(NULL, err, strlen(err))) {
+					if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
 						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
 					}
 				}
@@ -886,7 +890,11 @@ void ble_write_thread(void)
 					k_sem_give(&sem);
 				}else{
 					printk("Password storage cancelled\n");
-					// ERROR: Send via Bluetooth
+					if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
+						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+					}else{
+						printk("Sent: %s\n", ERR_OPERATION_REJECTED);
+					}
 				}
 
 				break;
