@@ -33,6 +33,9 @@
 
 #include <logging/log.h>
 
+#include <cJSON.h>
+#include <cJSON_os.h>
+
 #define LOG_MODULE_NAME peripheral_uart
 LOG_MODULE_REGISTER(LOG_MODULE_NAME);
 
@@ -85,6 +88,11 @@ UART_ASYNC_ADAPTER_INST_DEFINE(async_adapter);
 #else
 static const struct device *const async_adapter;
 #endif
+
+#define ERR_OK "{\"err\":\"ok\"}"
+#define ERR_PWD_NOT_FOUND "{\"err\":\"pwd not found\"}"
+#define ERR_OPERATION_REJECTED "{\"err\":\"operation rejected\"}"
+#define ERR_WRONG_FORMAT "{\"err\":\"wrong msg format\"}"
 
 // WIP:
 struct k_sem sem;
@@ -519,94 +527,37 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 			/* Parse JSON
 			Messages must be composed of 2 or 3 string values (depending on the type of message). Keys must be "username", "url" and (optionally) "pwd"
 			Example: {"url": "myurl.something", "username": "myusername"} or {"username": "myusername", "url": "myurl.something", "pwd": "mypassword"}*/
-			int lastMarkPosition;
-			int numMark = 0; // number of " found
-			char * json_array[6];
-			int msg_len = strlen(msg_rcv_buff);
-			char msg_rcv_buff_cpy[msg_len];			
-			strcpy(msg_rcv_buff_cpy, msg_rcv_buff);
-
-			//printk("msg_rcv_buff_cpy: %s\n", msg_rcv_buff_cpy);
-			for(int i = 0; i < msg_len; i++){
-				if(msg_rcv_buff_cpy[i] == '\"'){
-					numMark++;
-					if((numMark % 2) == 1){ // First " of pair
-						lastMarkPosition = i;
-					}else{	// Second " of pair
-						if(numMark <= 12){
-							json_array[(numMark/2)-1] = msg_rcv_buff_cpy + lastMarkPosition + 1;
-							msg_rcv_buff_cpy[i] = '\0';
-						}
-					}
-				}
-			}
-
-			//printk("\t- numMark: %d\n", numMark);
-
-			if(numMark == 8){
-				if( (strcmp(json_array[0], "url") == 0) && (strcmp(json_array[2], "user") == 0) ){
-					strcpy(pwdStruct.url, json_array[1]);				
-					strcpy(pwdStruct.username, json_array[3]);
-				}else if( (strcmp(json_array[0], "user") == 0) && (strcmp(json_array[2], "url") == 0) ){
-					strcpy(pwdStruct.url, json_array[3]);
-					strcpy(pwdStruct.username, json_array[1]);
-				}else{
-					// ERROR
-					printk("ERROR\n");
-				}
-
-				k_sem_give(&sem);
-
-			}else if(numMark == 12){
-				if(strcmp(json_array[0], json_array[2]) > 0){
-					char *aux_key, *aux_val;
-					aux_key = json_array[0];
-					aux_val = json_array[1];
-					json_array[0] = json_array[2];
-					json_array[1] = json_array[3];
-					json_array[2] = aux_key;
-					json_array[3] = aux_val;
-				}
-				if(strcmp(json_array[2], json_array[4]) > 0){
-					char *aux_key, *aux_val;
-					aux_key = json_array[2];
-					aux_val = json_array[3];
-					json_array[2] = json_array[4];
-					json_array[3] = json_array[5];
-					json_array[4] = aux_key;
-					json_array[5] = aux_val;
-				}
-				if(strcmp(json_array[0], json_array[2]) > 0){
-					char *aux_key, *aux_val;
-					aux_key = json_array[0];
-					aux_val = json_array[1];
-					json_array[0] = json_array[2];
-					json_array[1] = json_array[3];
-					json_array[2] = aux_key;
-					json_array[3] = aux_val;
-				}
-				for(int i = 0; i < 6; i++){
-					printk("\tjson_array[%d] = %s\n", i, json_array[i]);
-				}
-
-				if( (strcmp(json_array[0], "pwd") == 0) && (strcmp(json_array[2], "url") == 0) && (strcmp(json_array[4], "user") == 0)){
-					strcpy(pwdStruct.pwd, json_array[1]);
-					strcpy(pwdStruct.url, json_array[3]);
-					strcpy(pwdStruct.username, json_array[5]);
-
-					k_mutex_lock(&state_mutex, K_FOREVER);
-					state = WAITING_STORE_PWD_CONF;
-					k_mutex_unlock(&state_mutex);
-
-					printk("Do you want to store the password for user \"%s\"?\nTo confirm/reject, type Y/n\n", pwdStruct.username);
-				}else{
-					// ERROR: Wrong msg format
-					printk("Wrong msg format\n");
-				}
+			const cJSON *monitor_json = cJSON_Parse(msg_rcv_buff);
+			if(monitor_json == NULL){
+				printk("Error parsing JSON message\n");
 			}else{
-				// ERROR
-			}
+				const cJSON *json_url = cJSON_GetObjectItemCaseSensitive(monitor_json, "url");
+				const cJSON *json_username = cJSON_GetObjectItemCaseSensitive(monitor_json, "user");
+				const cJSON *json_pwd = cJSON_GetObjectItemCaseSensitive(monitor_json, "pwd");
 
+				if( cJSON_IsString(json_url) && (json_url->valuestring != NULL) && cJSON_IsString(json_username) && (json_username->valuestring != NULL) ){
+					/* It's a correct message */
+					if(cJSON_IsString(json_pwd) && (json_pwd->valuestring != NULL)){
+						/* It's a password register request */
+						strcpy(pwdStruct.pwd, json_pwd->valuestring);
+						strcpy(pwdStruct.url, json_url->valuestring);
+						strcpy(pwdStruct.username, json_username->valuestring);
+
+						k_mutex_lock(&state_mutex, K_FOREVER);
+						state = WAITING_STORE_PWD_CONF;
+						k_mutex_unlock(&state_mutex);
+
+						printk("Do you want to store the password for user \"%s\"?\nTo confirm/reject, type Y/n\n", pwdStruct.username);
+					}else{
+						/* It's a password get request */
+						strcpy(pwdStruct.url, json_url->valuestring);				
+						strcpy(pwdStruct.username, json_username->valuestring);
+						k_sem_give(&sem);
+					}
+				}else{
+					printk("Wrong message format\n");
+				}
+			}
 		} else if(tx->data[0] == '{'){
 			/* First message */
 			if(tx->len < UART_BUF_SIZE) tx->data[tx->len] = '\0';
@@ -763,6 +714,7 @@ void main(void)
 			}else{
 				printk("err = %d\n", err);
 			}
+
 		}else if(strcmp(pwdStruct.pwd, "") == 0){
 			/* Get password */
 			err = getPwd(&pwdStruct);
@@ -789,7 +741,10 @@ void main(void)
 			/* Storage password*/
 			storePwd(&pwdStruct);
 			strcpy(pwdStruct.pwd, ""); // Must be empty for future uses
-;			printk("Password stored\n");
+			printk("Password stored\n");
+			if (bt_nus_send(NULL, ERR_OK, strlen(ERR_OK))) {
+				LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+			}
 		}
 	}
 
@@ -811,7 +766,6 @@ void ble_write_thread(void)
 
 		// WIP:
 		char pwd_msg[12+strlen(pwdStruct.pwd)];
-		char err[] = "{\"err\": \"pwd not found\"}\r\n";
 
 		k_mutex_lock(&state_mutex, K_FOREVER);
 		switch(state){
@@ -869,7 +823,7 @@ void ble_write_thread(void)
 						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
 					}
 				}else{
-					if (bt_nus_send(NULL, err, strlen(err))) {
+					if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
 						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
 					}
 				}
@@ -886,7 +840,11 @@ void ble_write_thread(void)
 					k_sem_give(&sem);
 				}else{
 					printk("Password storage cancelled\n");
-					// ERROR: Send via Bluetooth
+					if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
+						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+					}else{
+						printk("Sent: %s\n", ERR_OPERATION_REJECTED);
+					}
 				}
 
 				break;
