@@ -1,4 +1,2 @@
 .vscode
-build
-boards
-child_image
+app/build
