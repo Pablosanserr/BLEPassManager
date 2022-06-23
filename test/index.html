@@ -1,0 +1,45 @@
+<!DOCTPYE html>
+<html>
+    <head>
+        <title>BHPM Test</title>
+        <link rel="stylesheet" href="test_style.css">
+        <script src="test_script.js"></script>
+    </head>
+    <body>
+        <header>
+            <h1>BHPM Test</h1>
+        </header>
+        <section>
+            <p>
+                This HTML document is a test focused on testing the behaviour of the bhpm hardware
+                module in basic use cases.
+            </p>
+            <p>
+                Make sure you have connected the device to its power supply. To start the test, 
+                click on the button. In order for the test to run correctly, follow the steps
+                below.
+            </p>
+            <p>
+                For proper test performance, type "clear storage" command in the UART input to 
+                ensure that the password store is empty. Note that an error in one test can lead to
+                errors in subsequent tests.
+            </p>
+            <hr>
+            <div class="test_steps">
+                <button id="start_test_button">START THE TEST</button>
+                <table id="test_steps_table">
+                    <tr>
+                        <th>STEP</th>
+                        <th>TESTED USE CASE</th>
+                    </tr>
+                </table>
+
+                <p id="finalMessage">-</p>
+            </div>
+            
+        </section>
+        <footer>
+            <h4>Developed by Pablo Sánchez Serrano</h4>
+        </footer>
+    </body>
+</html>
