@@ -93,13 +93,14 @@ static const struct device *const async_adapter;
 #define ERR_PWD_NOT_FOUND "{\"err\":\"pwd not found\"}"
 #define ERR_OPERATION_REJECTED "{\"err\":\"operation rejected\"}"
 #define ERR_WRONG_FORMAT "{\"err\":\"wrong msg format\"}"
+#define ERR_COMPLETE_STORAGE "{\"err\":\"storage is full\"}"
 
 // WIP:
 struct k_sem sem;
 struct k_mutex state_mutex;
 struct TPassword pwdStruct;
 
-enum CURRENT_STATE {IDLE, WAITING_GET_PWD_CONF, WAITING_STORE_PWD_CONF, WAITING_DELETE_ALL, DELETE_ALL_CONFIRMED, WAITING_SHOW_LIST};
+enum CURRENT_STATE {IDLE, WAITING_GET_PWD_CONF, WAITING_STORE_PWD_CONF, WAITING_DELETE_ALL, DELETE_ALL_CONFIRMED, WAITING_SHOW_LIST, WAITING_REQUEST_ERROR};
 int state = IDLE;
 
 char msg_rcv_buff[256];
@@ -511,7 +512,6 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 			k_fifo_put(&fifo_uart_tx_data, tx);
 		}
 
-		// WIP:
 		/* A JSON message can arrive in different packets */
 		if (tx->data[tx->len - 1] == '}'){
 			/* Last message */
@@ -539,20 +539,43 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 					/* It's a correct message */
 					if(cJSON_IsString(json_pwd) && (json_pwd->valuestring != NULL)){
 						/* It's a password register request */
-						strcpy(pwdStruct.pwd, json_pwd->valuestring);
-						strcpy(pwdStruct.url, json_url->valuestring);
-						strcpy(pwdStruct.username, json_username->valuestring);
+						if( (strlen(json_url->valuestring) <= URL_SIZE) && (strlen(json_username->valuestring) <= USERNAME_SIZE) && (strlen(json_pwd->valuestring) <= PWD_SIZE) ){
+							strcpy(pwdStruct.pwd, json_pwd->valuestring);
+							strcpy(pwdStruct.url, json_url->valuestring);
+							strcpy(pwdStruct.username, json_username->valuestring);
 
-						k_mutex_lock(&state_mutex, K_FOREVER);
-						state = WAITING_STORE_PWD_CONF;
-						k_mutex_unlock(&state_mutex);
+							k_mutex_lock(&state_mutex, K_FOREVER);
+							state = WAITING_STORE_PWD_CONF;
+							k_mutex_unlock(&state_mutex);
 
-						printk("Do you want to store the password for user \"%s\"?\nTo confirm/reject, type Y/n\n", pwdStruct.username);
+							printk("Do you want to store the password for user \"%s\"?\nTo confirm/reject, type Y/n\n", pwdStruct.username);
+						}else{
+							k_mutex_lock(&state_mutex, K_FOREVER);
+							state = WAITING_REQUEST_ERROR;
+							k_mutex_unlock(&state_mutex);
+
+							printk("Message error. Make sure the fields do not exceed the maximum allowed length");
+
+							k_sem_give(&sem);
+						}
+						
 					}else{
 						/* It's a password get request */
-						strcpy(pwdStruct.url, json_url->valuestring);				
-						strcpy(pwdStruct.username, json_username->valuestring);
-						k_sem_give(&sem);
+						if( (strlen(json_url->valuestring) <= URL_SIZE) && (strlen(json_username->valuestring) <= USERNAME_SIZE) ){
+							strcpy(pwdStruct.url, json_url->valuestring);				
+							strcpy(pwdStruct.username, json_username->valuestring);
+							strcpy(pwdStruct.pwd, "");
+							k_sem_give(&sem);
+						}else{
+							k_mutex_lock(&state_mutex, K_FOREVER);
+							state = WAITING_REQUEST_ERROR;
+							k_mutex_unlock(&state_mutex);
+
+							printk("Message error. Make sure the fields do not exceed the maximum allowed length");
+
+							k_sem_give(&sem);
+						}
+						
 					}
 				}else{
 					printk("Wrong message format\n");
@@ -569,7 +592,7 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 			strcat(msg_rcv_buff, tx->data);
 		}
 
-		printk("Reconstructed message: %s\n", msg_rcv_buff);
+		//printk("Reconstructed message: %s\n", msg_rcv_buff);
 	}
 }
 
@@ -698,6 +721,7 @@ void main(void)
 			k_mutex_lock(&state_mutex, K_FOREVER);
 			state = IDLE;
 			k_mutex_unlock(&state_mutex);
+
 		}else if(current_state == WAITING_SHOW_LIST){
 			k_mutex_lock(&state_mutex, K_FOREVER);
 			state = IDLE;
@@ -715,6 +739,15 @@ void main(void)
 				printk("err = %d\n", err);
 			}
 
+		}else if(current_state == WAITING_REQUEST_ERROR){
+			if (bt_nus_send(NULL, ERR_WRONG_FORMAT, strlen(ERR_WRONG_FORMAT))) {
+				LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+			}
+
+			k_mutex_lock(&state_mutex, K_FOREVER);
+			state = IDLE;
+			k_mutex_unlock(&state_mutex);
+
 		}else if(strcmp(pwdStruct.pwd, "") == 0){
 			/* Get password */
 			err = getPwd(&pwdStruct);
@@ -723,7 +756,7 @@ void main(void)
 				printk("New message:\n");
 				printk("\t- URL: %s\n", pwdStruct.url);
 				printk("\t- Username: %s\n", pwdStruct.username);
-				printk("There is a password stored for this user: %s\n", pwdStruct.pwd);
+				/*printk("There is a password stored for this user: %s\n", pwdStruct.pwd);*/
 
 				/* Password obtained. Ask user for confirmation */
 				printk("There is a password stored for user '%s'.\nTo confirm/reject, type Y/n\n", pwdStruct.username);
@@ -731,20 +764,32 @@ void main(void)
 				state = WAITING_GET_PWD_CONF;
 				k_mutex_unlock(&state_mutex);
 			}else{
-				printk("err = %d\n", err);
+				printk("Password is not stored (err = %d)\n", err);
+
+				if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
+					LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+				}
 			}
 		}else{
 			printk("New message:\n");
 			printk("\t- URL: %s\n", pwdStruct.url);
 			printk("\t- Username: %s\n", pwdStruct.username);
-			printk("\t- Password: %s\n", pwdStruct.pwd);
+			/*printk("\t- Password: %s\n", pwdStruct.pwd);*/
+			printk("\t- Password: ********\n");
+
 			/* Storage password*/
-			storePwd(&pwdStruct);
+			err = storePwd(&pwdStruct);
 			strcpy(pwdStruct.pwd, ""); // Must be empty for future uses
-			printk("Password stored\n");
-			if (bt_nus_send(NULL, ERR_OK, strlen(ERR_OK))) {
-				LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
-			}
+			if(err == 0){
+				printk("Password stored\n");
+				if (bt_nus_send(NULL, ERR_OK, strlen(ERR_OK))) {
+					LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+				}
+			}else if(err == -1){
+				if (bt_nus_send(NULL, ERR_COMPLETE_STORAGE, strlen(ERR_COMPLETE_STORAGE))) {
+					LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+				}
+			}			
 		}
 	}
 
@@ -764,14 +809,12 @@ void ble_write_thread(void)
 		struct uart_data_t *buf = k_fifo_get(&fifo_uart_rx_data,
 						     K_FOREVER);
 
-		// WIP:
 		char pwd_msg[12+strlen(pwdStruct.pwd)];
 
 		k_mutex_lock(&state_mutex, K_FOREVER);
 		switch(state){
 			case IDLE:
 				k_mutex_unlock(&state_mutex);
-				printk("IDLE\n");
 				if( buf->len < UART_BUF_SIZE) buf->data[buf->len] = '\0';
 				if( buf->data[buf->len - 1] == '\r' || buf->data[buf->len - 1] == '\n'){
 					buf->data[buf->len - 1] = '\0';
@@ -795,7 +838,6 @@ void ble_write_thread(void)
 
 			case WAITING_DELETE_ALL:
 				k_mutex_unlock(&state_mutex);
-				printk("WAITING_DELETE_ALL\n");
 				if( buf->len < UART_BUF_SIZE) buf->data[buf->len] = '\0';
 				if(buf->data[0]=='Y' || buf->data[0]=='y'){
 					k_mutex_lock(&state_mutex, K_FOREVER);
@@ -809,7 +851,6 @@ void ble_write_thread(void)
 			case WAITING_GET_PWD_CONF:
 				state = IDLE;
 				k_mutex_unlock(&state_mutex);
-				printk("WAITING_GET_PWD_CONF\n");
 
 				if( buf->len < UART_BUF_SIZE) buf->data[buf->len] = '\0';
 				if(buf->data[0]=='Y' || buf->data[0]=='y'){
@@ -817,23 +858,22 @@ void ble_write_thread(void)
 					strcpy(pwd_msg + 9, pwdStruct.pwd);
 					strcpy(pwd_msg + 9 + strlen(pwdStruct.pwd), "\"}");
 					strcpy(pwdStruct.pwd, ""); // Must be empty for future uses
-					printk("Mensaje a enviar: %s\n", pwd_msg);
 					
 					if (bt_nus_send(NULL, pwd_msg, strlen(pwd_msg))) {
 						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+					}else{
+						printk("Password sent to client\n");
 					}
 				}else{
 					if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
 						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
 					}
 				}
-
 				break;
 
 			case WAITING_STORE_PWD_CONF:
 				state = IDLE;
 				k_mutex_unlock(&state_mutex);
-				printk("WAITING_STORE_PWD_CONF\n");
 
 				if( buf->len < UART_BUF_SIZE) buf->data[buf->len] = '\0';
 				if(buf->data[0]=='Y' || buf->data[0]=='y'){
@@ -846,7 +886,6 @@ void ble_write_thread(void)
 						printk("Sent: %s\n", ERR_OPERATION_REJECTED);
 					}
 				}
-
 				break;
 
 			default:
