@@ -107,7 +107,9 @@ int storePwd(const struct TPassword *pwdStruct){
     printk("received url: %s, received username: %s, received pwd: %s\n", pwdStruct->url, pwdStruct->username, pwdStruct->pwd);
 
     rc = nvs_read(&fs, PWD_LIST_ID, &pwdList, sizeof(pwdList));
-    if(rc > 0 || numPwd == 0){
+    if(numPwd == MAX_STORABLE_PWD){
+        rc = -1;
+    }else if(rc > 0 || numPwd == 0){
         /* List was found */
         int i = 0;
         while(i < numPwd){
@@ -117,7 +119,6 @@ int storePwd(const struct TPassword *pwdStruct){
                 strcpy(pwdList[i].pwd, pwdStruct->pwd);
                 (void)nvs_write(&fs, PWD_LIST_ID, &pwdList, sizeof(pwdList));
 
-                numPwd++;
                 (void)nvs_write(&fs, NUM_PWD_ID, &numPwd, sizeof(numPwd));
                 return 0;
             }else{

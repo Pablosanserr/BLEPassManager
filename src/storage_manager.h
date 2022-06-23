@@ -8,16 +8,16 @@
 
 #define INIT_ERROR -1
 
-#define URL_SIZE 48
-#define USERNAME_SIZE 24
-#define PWD_SIZE 24
+#define URL_SIZE 47
+#define USERNAME_SIZE 23
+#define PWD_SIZE 23
 
 #define MAX_STORABLE_PWD 24
 
 typedef struct TPassword{
-	char url[URL_SIZE];
-	char username[USERNAME_SIZE];
-	char pwd[PWD_SIZE];
+	char url[URL_SIZE+1];
+	char username[USERNAME_SIZE+1];
+	char pwd[PWD_SIZE+1];
 };
 
 /**
