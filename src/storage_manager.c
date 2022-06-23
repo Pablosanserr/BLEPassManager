@@ -55,8 +55,6 @@ int getPwd(struct TPassword *pwdStruct){
     int rc = 0;
     struct TPassword pwdList[MAX_STORABLE_PWD];
 
-    printk("received url: %s, received username: %s\n", pwdStruct->url, pwdStruct->username);
-
     rc = nvs_read(&fs, PWD_LIST_ID, &pwdList, sizeof(pwdList));
     if(rc > 0){
         /* List was found */
@@ -69,11 +67,9 @@ int getPwd(struct TPassword *pwdStruct){
                 i++;
             }
         }
-        printk("i = %d, numPwd = %d\n", i, numPwd);
-        // ERROR. Password not found
+        /* Password not found */
         rc = -1;
     }else{
-        printk("errno: %d\n", errno);
         strcpy(pwdStruct->pwd, "errno");
     }
     return rc;
@@ -103,8 +99,6 @@ int getAllPwd(struct TPassword *pwdList){
 int storePwd(const struct TPassword *pwdStruct){
     int rc = 0;
     struct TPassword pwdList[MAX_STORABLE_PWD];
-
-    printk("received url: %s, received username: %s, received pwd: %s\n", pwdStruct->url, pwdStruct->username, pwdStruct->pwd);
 
     rc = nvs_read(&fs, PWD_LIST_ID, &pwdList, sizeof(pwdList));
     if(numPwd == MAX_STORABLE_PWD){
@@ -138,11 +132,10 @@ int storePwd(const struct TPassword *pwdStruct){
             (void)nvs_write(&fs, NUM_PWD_ID, &numPwd, sizeof(numPwd));
             return 0;
         }else{
-            // ERROR. Reached MAX_STORABLE_PWD
+            /* Reached MAX_STORABLE_PWD */
             rc = -1;
         }
     }else{
-        printk("errno: %d\n", errno);
         strcpy(pwdStruct->pwd, "errno");
     }
     printk("numPwd: %d\n", numPwd);
