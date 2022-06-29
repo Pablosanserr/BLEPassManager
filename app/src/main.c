@@ -95,7 +95,6 @@ static const struct device *const async_adapter;
 #define ERR_WRONG_FORMAT "{\"err\":\"wrong msg format\"}"
 #define ERR_COMPLETE_STORAGE "{\"err\":\"storage is full\"}"
 
-// WIP:
 struct k_sem sem;
 struct k_mutex state_mutex;
 struct TPassword pwdStruct;
@@ -507,21 +506,31 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 			tx->len++;
 		}
 
+		/* Save the message received */
+		char ble_msg[tx->len+1]; 
+		if(tx->len < UART_BUF_SIZE) tx->data[tx->len] = '\0';
+		strcpy(ble_msg, tx->data);
+
+		/* The message received may contain confidential information. It is better to delete it */
+		for(int i = 0; i < tx->len; i++){
+			tx->data[i] = ' ';
+		}
+
 		err = uart_tx(uart, tx->data, tx->len, SYS_FOREVER_MS);
 		if (err) {
 			k_fifo_put(&fifo_uart_tx_data, tx);
 		}
 
+		printk("\n");
+
 		/* A JSON message can arrive in different packets */
-		if (tx->data[tx->len - 1] == '}'){
+		if (ble_msg[tx->len - 1] == '}'){
 			/* Last message */
-			if(tx->data[0] == '{'){
+			if(ble_msg[0] == '{'){
 				/* It's a single message */
-				if(tx->len < UART_BUF_SIZE) tx->data[tx->len] = '\0';
-				strcpy(msg_rcv_buff, tx->data);
+				strcpy(msg_rcv_buff, ble_msg);
 			}else{
-				if(tx->len < UART_BUF_SIZE) tx->data[tx->len] = '\0';
-				strcat(msg_rcv_buff, tx->data);
+				strcat(msg_rcv_buff, ble_msg);
 			}			
 
 			/* Parse JSON
@@ -581,18 +590,14 @@ static void bt_receive_cb(struct bt_conn *conn, const uint8_t *const data,
 					printk("Wrong message format\n");
 				}
 			}
-		} else if(tx->data[0] == '{'){
+		} else if(ble_msg[0] == '{'){
 			/* First message */
-			if(tx->len < UART_BUF_SIZE) tx->data[tx->len] = '\0';
-			strcpy(msg_rcv_buff, tx->data);
+			strcpy(msg_rcv_buff, ble_msg);
 			
 		} else {
 			/* Other message*/
-			if(tx->len < UART_BUF_SIZE) tx->data[tx->len] = '\0';
-			strcat(msg_rcv_buff, tx->data);
+			strcat(msg_rcv_buff, ble_msg);
 		}
-
-		//printk("Reconstructed message: %s\n", msg_rcv_buff);
 	}
 }
 
@@ -660,7 +665,6 @@ static void configure_gpio(void)
 
 void main(void)
 {
-	//int blink_status = 0;
 	int err = 0;
 
 	configure_gpio();
@@ -741,7 +745,7 @@ void main(void)
 
 		}else if(current_state == WAITING_REQUEST_ERROR){
 			if (bt_nus_send(NULL, ERR_WRONG_FORMAT, strlen(ERR_WRONG_FORMAT))) {
-				LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+				LOG_WRN("Failed to send data over BLE connection (%d)", 99);
 			}
 
 			k_mutex_lock(&state_mutex, K_FOREVER);
@@ -767,7 +771,7 @@ void main(void)
 				printk("Password is not stored (err = %d)\n", err);
 
 				if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
-					LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+					LOG_WRN("Failed to send data over BLE connection (%d)", 99);
 				}
 			}
 		}else{
@@ -783,11 +787,12 @@ void main(void)
 			if(err == 0){
 				printk("Password stored\n");
 				if (bt_nus_send(NULL, ERR_OK, strlen(ERR_OK))) {
-					LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+					LOG_WRN("Failed to send data over BLE connection (%d)", 99);
 				}
 			}else if(err == -1){
+				printk("Storage is full. No new password can be stored\n");
 				if (bt_nus_send(NULL, ERR_COMPLETE_STORAGE, strlen(ERR_COMPLETE_STORAGE))) {
-					LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+					LOG_WRN("Failed to send data over BLE connection (%d)", 99);
 				}
 			}			
 		}
@@ -857,16 +862,16 @@ void ble_write_thread(void)
 					strcpy(pwd_msg, "{\"pwd\": \"" );
 					strcpy(pwd_msg + 9, pwdStruct.pwd);
 					strcpy(pwd_msg + 9 + strlen(pwdStruct.pwd), "\"}");
-					strcpy(pwdStruct.pwd, ""); // Must be empty for future uses
+					strcpy(pwdStruct.pwd, ""); /* Must be empty for future uses */
 					
 					if (bt_nus_send(NULL, pwd_msg, strlen(pwd_msg))) {
-						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+						LOG_WRN("Failed to send data over BLE connection (%d)", 99);
 					}else{
 						printk("Password sent to client\n");
 					}
 				}else{
 					if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
-						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+						LOG_WRN("Failed to send data over BLE connection (%d)", 99);
 					}
 				}
 				break;
@@ -881,7 +886,7 @@ void ble_write_thread(void)
 				}else{
 					printk("Password storage cancelled\n");
 					if (bt_nus_send(NULL, ERR_OPERATION_REJECTED, strlen(ERR_OPERATION_REJECTED))) {
-						LOG_WRN("Failed to send data over BLE connection (%d)", 99); // 99 puesto por mí
+						LOG_WRN("Failed to send data over BLE connection (%d)", 99);
 					}else{
 						printk("Sent: %s\n", ERR_OPERATION_REJECTED);
 					}
